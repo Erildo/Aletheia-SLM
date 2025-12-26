@@ -1,37 +1,56 @@
-import openai
+from datasets import load_dataset
 import json
 
-# Initialize client
-client = openai.OpenAI(api_key="YOUR_OPENAI_API_KEY")
-
-# Topics to make your SLM smart
-TOPICS = [
-    "Quantum physics for beginners",
-    "How to debug complex Python memory leaks",
-    "The logic of deductive reasoning in Sherlock Holmes",
-    "Explaining 2025 AI architectures to a child"
-]
-
-def generate_reasoning_sample(topic):
-    prompt = f"""Write a 'thinking trace' and a final explanation for the following topic: {topic}.
-    Format the output as a JSON object with:
-    'instruction': The user question.
-    'thought': A step-by-step logical breakdown of the answer.
-    'output': The final concise, high-quality text.
-    """
+def process_slim_orca():
+    print("Loading SlimOrca-Dedup from Hugging Face...")
+    # Load the deduplicated split
+    dataset = load_dataset("Open-Orca/SlimOrca-Dedup", split="train")
     
-    # Using a 2025 reasoning-capable model (like o1 or gpt-4o)
-    response = client.chat.completions.create(
-        model="gpt-4o", 
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"}
-    )
-    return response.choices[0].message.content
+    processed_count = 0
+    output_file = "aletheia_orca_distill.jsonl"
+    
+    with open(output_file, "w") as f:
+        for entry in dataset:
+            convs = entry['conversations']
+            
+            # SlimOrca usually follows: System -> Human -> GPT
+            # We want to extract this into a flat structure
+            system_prompt = ""
+            user_query = ""
+            gpt_response = ""
+            
+            for turn in convs:
+                role = turn['from']
+                content = turn['value']
+                
+                if role == 'system':
+                    system_prompt = content
+                elif role == 'human':
+                    user_query = content
+                elif role == 'gpt':
+                    gpt_response = content
+            
+            # Create a combined 'instruction' that includes the system guidance
+            full_instruction = f"{system_prompt}\n\nUser: {user_query}".strip()
+            
+            # Format for Thinking Labs / LoRA Distillation
+            # Note: We include 'thought' as empty or placeholder if we want to 
+            # let the Teacher model fill it during on-policy distillation.
+            formatted_entry = {
+                "instruction": full_instruction,
+                "thought": "The model should follow the system instructions and break down the logic step-by-step.",
+                "output": gpt_response
+            }
+            
+            f.write(json.dumps(formatted_entry) + "\n")
+            processed_count += 1
+            
+            # For a 1.5B model, 100k high-quality samples is a great starting point
+            if processed_count >= 100000:
+                break
 
-# Generate and save
-with open("aletheia_distill_data.jsonl", "w") as f:
-    for topic in TOPICS:
-        sample = generate_reasoning_sample(topic)
-        f.write(sample + "\n")
+    print(f"Success! Saved {processed_count} samples to {output_file}")
 
-print("Distillation dataset 'aletheia_distill_data.jsonl' is ready!")
+if __name__ == "__main__":
+    process_slim_orca()
+

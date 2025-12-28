@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+models/
+data_cache/
+results/
+.vscode/
+*.pt
+*.so
